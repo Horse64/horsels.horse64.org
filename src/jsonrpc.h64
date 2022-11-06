@@ -1,0 +1,140 @@
+# @module jsonrpc
+# Copyright (c) 2022,  ellie/@ell1e & HorseLS Team (see AUTHORS.md).
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice,
+#    this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+#
+# Alternatively, at your option, this file is offered under the Apache 2
+# license, see accompanied LICENSE.md.
+
+import limit from core.horse64.org
+import log from core.horse64.org
+
+
+type RpcReader {
+    var msg_headers = {->}
+    var msg_raw_headers = none
+    var msg_buffer = b""
+    var msg_body = b""
+    var msg_content_len = -1
+    var file_obj
+    var max_message_size = 1024 * 1024 * 5
+}
+
+func RpcReader.init(fobj) {
+    self.file_obj = fobj
+}
+
+func RpcReader.have_message {
+    self.process_message()
+    return no
+}
+
+func RpcReader.process_message {
+    if self.msg_raw_headers == none and
+            self.msg_buffer.ends(b"\n\n") {
+        self.msg_raw_headers = self.msg_buffer
+        var headers_lines = (
+            self.msg_raw_headers.as_str().split("\n")
+        )
+        for line in headers_lines {
+            line = line.trim()
+            if not line.has(":") {
+                continue
+            }
+            var pos = line.find(":")
+            if pos <= 1 or pos >= line.len {
+                continue
+            }
+            self.msg_headers[line.sub(1, pos - 1).trim().lower()] = (
+                line.sub(pos + 1).trim()
+            )
+        }
+        if not self.msg_headers.has("content-length") or
+                not is_num(self.msg_headers["content-length"]) or
+                self.msg_headers["content-length"].len >=
+                     limit.num_max_str.len - 1 or
+                self.msg_headers["content-length"].to_num() >
+                    self.max_message_size or
+                self.msg_headers["content-length"].to_num() < 0 {
+            log.l("Got JSON-RPC message with invalid headers, "
+                "no Content-Length. Resetting message parser.",
+                kind=log.L_WARNING, where="src/jsonrpc.h64")
+            self.reset_message()
+            return
+        }
+        self.msg_content_len = (
+            self.msg_headers["content-length"].to_num()
+        )
+        #print("HEADERS: " + self.msg_headers.as_str())
+    }
+    if self.msg_raw_headers != none and
+            self.msg_content_len >= 0 {
+        if self.msg_buffer.len - self.msg_raw_headers.len >=
+                self.msg_content_len {
+            self.msg_body = self.msg_buffer.sub(
+                self.msg_raw_headers.len
+            )
+            return yes
+        }
+    }
+}
+
+func RpcReader.reset_message {
+    self.msg_buffer = b""
+    self.msg_headers = {->}
+    self.msg_raw_headers = none
+    self.msg_content_len = -1
+    self.msg_body = b""
+}
+
+func RpcReader._extract_msg {
+    var msg = self.msg_buffer.as_str()
+    self.reset_message()
+    log.l("Got message: " + [self.msg_headers,
+        self.msg_body].as_str(), kind=log.L_DEBUG,
+        where="src/jsonrpc.h64")
+    return msg
+}
+
+func RpcReader.get_next_message {
+    if self.have_message() {
+        return self._extract_msg()
+    }
+    var c = self.file_obj.read(amount=1) later:
+    await c
+
+    if typename(c) != "bytes" {
+        throw new ValueError("Need file object "
+            "to be in binary mode.")
+    }
+    if c == b"\n" and self.msg_buffer.endswith(b"\r") {
+        self.msg_buffer = self.msg_buffer.sub(
+            1, self.msg_buffer.len - 1)
+    }
+    self.msg_buffer += c
+
+    if self.have_message() {
+        return self._extract_msg()
+    }
+    c = self.file_obj.read(amount=1) later repeat
+}
+

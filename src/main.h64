@@ -27,6 +27,9 @@
 
 import argparse from core.horse64.org
 import log from core.horse64.org
+import terminal from core.horse64.org
+
+import jsonrpc
 
 
 func main {
@@ -39,10 +42,25 @@ func main {
     defs.add_switch("--log", takes_arg=yes,
         description="The file to write a debug log to.")
     var result = argparse.parse(defs)
+
+    # Configure logger:
     log.set_terminal_output(no)
     if result.args["--log"] != none {
         log.set_file_output(result.args["--log"])
     }
-    log.l("Starting up.")
+    log.set_program_prefix("horsels")
+    log.l("Starting up.", where="src/main.h64")
+
+    # Main loop:
+    var fobj = terminal.open_input(binary=yes) later:
+    await fobj
+
+    var reader = jsonrpc.RpcReader(fobj)
+    var msg = reader.get_next_message() later:
+    await msg
+
+    print("msg: <" + msg + ">")
+
+    msg = reader.get_next_message() later repeat
 }
 
