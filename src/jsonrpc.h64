@@ -75,8 +75,8 @@ func RpcReader.process_message {
                 self.msg_headers["content-length"].to_num() >
                     self.max_message_size or
                 self.msg_headers["content-length"].to_num() < 0 {
-            log.l("Got JSON-RPC message with invalid headers, "
-                "no Content-Length. Resetting message parser.",
+            log.l("Got JSON-RPC message with invalid headers without "
+                "valid content length. Resetting message parser.",
                 kind=log.L_WARNING, where="src/jsonrpc.h64")
             self.reset_message()
             return
