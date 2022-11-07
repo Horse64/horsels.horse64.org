@@ -122,6 +122,8 @@ func RpcReader.get_next_message {
     var c = self.file_obj.read(amount=1) later:
     await c
 
+    log.l("CHAR <" + c.as_str() + ">", kind=log.L_DEBUG,
+        where="src/jsonrpc.h64")
     if typename(c) != "bytes" {
         throw new ValueError("Need file object "
             "to be in binary mode.")
