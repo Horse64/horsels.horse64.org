@@ -27,6 +27,7 @@
 
 import limit from core.horse64.org
 import log from core.horse64.org
+import textfmt from core.horse64.org
 
 
 type RpcReader {
@@ -44,7 +45,9 @@ func RpcReader.init(fobj) {
 }
 
 func RpcReader.have_message {
-    self.process_message()
+    if self.process_message() {
+        return yes
+    }
     return no
 }
 
@@ -76,15 +79,18 @@ func RpcReader.process_message {
                     self.max_message_size or
                 self.msg_headers["content-length"].to_num() < 0 {
             log.l("Got JSON-RPC message with invalid headers without "
-                "valid content length. Resetting message parser.",
+                "valid content length. Broken message follows: " +
+                textfmt.escape_problematic(
+                    self.msg_buffer
+                ),
                 kind=log.L_WARNING, where="src/jsonrpc.h64")
             self.reset_message()
-            return
+            return no
         }
         self.msg_content_len = (
             self.msg_headers["content-length"].to_num()
         )
-        #print("HEADERS: " + self.msg_headers.as_str())
+        #log.l("HEADERS: " + self.msg_headers.as_str())
     }
     if self.msg_raw_headers != none and
             self.msg_content_len >= 0 {
@@ -96,6 +102,7 @@ func RpcReader.process_message {
             return yes
         }
     }
+    return no
 }
 
 func RpcReader.reset_message {
@@ -122,17 +129,22 @@ func RpcReader.get_next_message {
     var c = self.file_obj.read(amount=1) later:
     await c
 
-    log.l("CHAR <" + c.as_str() + ">", kind=log.L_DEBUG,
-        where="src/jsonrpc.h64")
     if typename(c) != "bytes" {
         throw new ValueError("Need file object "
             "to be in binary mode.")
     }
-    if c == b"\n" and self.msg_buffer.endswith(b"\r") {
+    if self.msg_raw_headers == none and
+            c == b"\n" and self.msg_buffer.endswith(b"\r") {
         self.msg_buffer = self.msg_buffer.sub(
             1, self.msg_buffer.len - 1)
     }
     self.msg_buffer += c
+    #log.l("state: " + [
+    #    self.msg_content_len,
+    #    if self.msg_raw_headers != none and self.msg_buffer != None
+    #        (self.msg_buffer.len - self.msg_raw_headers.len) else (0),
+    #    self.msg_buffer
+    #    ].as_str())
 
     if self.have_message() {
         return self._extract_msg()
